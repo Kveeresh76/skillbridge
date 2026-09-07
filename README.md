@@ -129,6 +129,16 @@ For HTTPS, place a managed TLS proxy or load balancer in front of the app and
 set `CORS_ORIGINS` to the HTTPS origin. Back up the `postgres_data` volume
 before upgrades.
 
+### Render deployment
+
+Create a Render PostgreSQL service first, then add its **internal database URL**
+to the web service environment as `DATABASE_URL`. Do not use `localhost`,
+`127.0.0.1`, or the public browser URL for this value. Render services must
+also define `JWT_SECRET_KEY`, `CORS_ORIGINS`, `ENVIRONMENT=production`, and
+`DEBUG=false` before deploying. The container runs `alembic upgrade head` on
+startup and refuses to start if production is configured with a localhost
+database URL.
+
 ## Environment variables
 
 See `backend/.env.example` and `frontend/.env.example`. Never commit a real `.env` file —
