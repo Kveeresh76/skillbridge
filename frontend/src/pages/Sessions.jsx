@@ -1,0 +1,5 @@
+import { useEffect, useState } from 'react';
+import WorkspaceShell from '../components/WorkspaceShell';
+import api from '../services/api';
+
+export default function Sessions() { const [sessions, setSessions] = useState([]); useEffect(() => { api.get('/workspace/sessions').then(({ data }) => setSessions(data.sessions)); }, []); return <WorkspaceShell title="Sessions" eyebrow="Your learning calendar"><div className="mt-8 grid gap-4 md:grid-cols-2">{sessions.length ? sessions.map((session) => <div className="card p-6" key={session.id}><div className="flex justify-between"><h2 className="font-display text-2xl text-ink-900 dark:text-white">{session.skill}</h2><span className="text-xs uppercase text-ember-600">{session.status}</span></div><p className="mt-3 text-sm text-ink-500">With {session.partner}</p><p className="mt-1 text-sm text-ink-500">{new Date(session.start_time).toLocaleString()}</p>{session.meeting_link && <a className="btn-primary mt-5" href={session.meeting_link} target="_blank" rel="noreferrer">Open meeting</a>}</div>) : <p className="text-sm text-ink-500">No sessions scheduled yet. Find a skill partner to get started.</p>}</div></WorkspaceShell>; }
