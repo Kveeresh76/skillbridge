@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowUpRight, BookOpen, CalendarDays, Coins, MessageCircle, Search, Sparkles } from 'lucide-react';
+import { ArrowUpRight, Bell, BookOpen, CalendarDays, Coins, Handshake, MessageCircle, Search, Sparkles } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 
@@ -14,6 +14,7 @@ export default function Dashboard() {
   const { user } = useAuth();
   const [summary, setSummary] = useState(null);
   const [summaryError, setSummaryError] = useState('');
+  const [notifications, setNotifications] = useState([]);
   const firstName = user?.full_name?.split(' ')[0] || user?.username || 'there';
 
   useEffect(() => {
@@ -25,8 +26,18 @@ export default function Dashboard() {
       .catch(() => {
         if (isMounted) setSummaryError('Dashboard details could not be loaded. Please refresh the page.');
       });
+    api.get('/workspace/notifications')
+      .then(({ data }) => {
+        if (isMounted) setNotifications(data.notifications);
+      })
+      .catch(() => {});
     return () => { isMounted = false; };
   }, []);
+
+  async function markNotificationsRead() {
+    await api.post('/workspace/notifications/read');
+    setNotifications((current) => current.map((item) => ({ ...item, is_read: true })));
+  }
 
   const nextSession = summary?.next_session;
   const sessionDate = nextSession ? new Date(nextSession.start_time).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : null;
@@ -56,7 +67,7 @@ export default function Dashboard() {
           <Link to="/discover" className="btn-primary shrink-0"><Search className="h-4 w-4" /> Find a skill</Link>
         </section>
 
-        <section className="mt-10 grid gap-4 sm:grid-cols-3">
+        <section className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div className="card border-l-4 border-l-ember-500 p-5">
             <Coins className="h-5 w-5 text-ember-500" />
             <p className="mt-5 text-sm text-ink-500 dark:text-ink-300">Skill Credits</p>
@@ -72,6 +83,11 @@ export default function Dashboard() {
             <p className="mt-5 text-sm text-ink-500 dark:text-ink-300">Unread messages</p>
             <p className="mt-1 font-display text-3xl text-ink-900 dark:text-ink-50">{summary?.unread_messages ?? '...'}</p>
           </div>
+          <Link className="card p-5 transition-transform hover:-translate-y-0.5" to="/requests">
+            <Handshake className="h-5 w-5 text-ink-500" />
+            <p className="mt-5 text-sm text-ink-500 dark:text-ink-300">Pending requests</p>
+            <p className="mt-1 font-display text-3xl text-ink-900 dark:text-ink-50">{summary?.pending_requests ?? '...'}</p>
+          </Link>
         </section>
 
         <section className="mt-10 grid gap-6 lg:grid-cols-[1.25fr_0.75fr]">
@@ -93,7 +109,25 @@ export default function Dashboard() {
           </div>
 
           <div>
-            <h2 className="font-display text-2xl text-ink-900 dark:text-ink-50">Keep building</h2>
+            <div className="card p-6">
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="flex items-center gap-2 font-display text-2xl text-ink-900 dark:text-ink-50"><Bell className="h-5 w-5 text-ember-500" /> Activity</h2>
+                {notifications.some((item) => !item.is_read) && (
+                  <button className="text-xs font-medium text-ember-600 hover:text-ember-700" type="button" onClick={markNotificationsRead}>Mark all read</button>
+                )}
+              </div>
+              <ul className="mt-4 space-y-3">
+                {notifications.slice(0, 5).map((item) => (
+                  <li key={item.id} className={`border-l-2 pl-3 ${item.is_read ? 'border-ink-100 dark:border-ink-800' : 'border-ember-500'}`}>
+                    <p className="text-sm font-medium text-ink-900 dark:text-ink-50">{item.title}</p>
+                    <p className="mt-1 text-xs leading-5 text-ink-500 dark:text-ink-300">{item.body}</p>
+                  </li>
+                ))}
+                {!notifications.length && <li className="text-xs text-ink-500">Nothing new yet. Send an exchange request to get things moving.</li>}
+              </ul>
+            </div>
+
+            <h2 className="mt-8 font-display text-2xl text-ink-900 dark:text-ink-50">Keep building</h2>
             <div className="mt-4 space-y-3">
               {activity.map(({ icon: Icon, title, detail, href }) => (
                 <Link key={title} to={href} className="card flex gap-4 p-4 transition-transform hover:-translate-y-0.5">

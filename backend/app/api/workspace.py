@@ -8,15 +8,14 @@ from app.api.auth import get_current_user
 from app.database.database import get_db
 from app.models import (
     Conversation,
-    CreditTransaction,
     ExchangeRequest,
     Message,
+    Notification,
     Profile,
-    Session as LearningSession,
     User,
-    UserSkill,
 )
-from app.models.common import RequestStatus
+from app.models.common import NotificationType, RequestStatus
+from app.services.exchange import TRANSITION_ACTOR, ensure_conversation, notify
 
 router = APIRouter(prefix="/workspace", tags=["workspace"])
 
@@ -30,6 +29,10 @@ class ProfileUpdate(BaseModel):
 
 class MessageCreate(BaseModel):
     body: str = Field(min_length=1, max_length=2000)
+
+
+class RequestStatusUpdate(BaseModel):
+    status: RequestStatus
 
 
 def request_json(item: ExchangeRequest):
@@ -59,13 +62,47 @@ def requests(user: Annotated[User, Depends(get_current_user)]):
 
 
 @router.patch("/requests/{request_id}")
-def update_request(request_id: int, status: RequestStatus, user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)]):
+def update_request(
+    request_id: int,
+    payload: RequestStatusUpdate,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
     item = db.get(ExchangeRequest, request_id)
-    if not item or item.receiver_id != user.id:
+    if not item or user.id not in (item.sender_id, item.receiver_id):
         raise HTTPException(status_code=404, detail="Request not found")
-    item.status = status
+
+    actor = "receiver" if item.receiver_id == user.id else "sender"
+    if TRANSITION_ACTOR.get(payload.status) != actor:
+        raise HTTPException(status_code=403, detail=f"You cannot mark this request as {payload.status.value.lower()}")
+    if item.status != RequestStatus.PENDING:
+        raise HTTPException(status_code=409, detail=f"This request was already {item.status.value.lower()}")
+
+    item.status = payload.status
+    if payload.status == RequestStatus.ACCEPTED:
+        ensure_conversation(db, item)
+        notify(
+            db,
+            item.sender_id,
+            NotificationType.REQUEST_ACCEPTED,
+            "Request accepted",
+            f"{user.full_name} accepted your exchange request. Your conversation is open.",
+            "exchange_request",
+            item.id,
+        )
+    elif payload.status == RequestStatus.REJECTED:
+        notify(
+            db,
+            item.sender_id,
+            NotificationType.REQUEST_REJECTED,
+            "Request declined",
+            f"{user.full_name} declined your exchange request.",
+            "exchange_request",
+            item.id,
+        )
+
     db.commit()
-    return {"message": "Request updated", "status": status.value}
+    return {"message": "Request updated", "status": item.status.value}
 
 
 @router.get("/sessions")
@@ -79,24 +116,116 @@ def credits(user: Annotated[User, Depends(get_current_user)]):
     return {"balance": user.skill_credits, "transactions": [{"id": item.id, "amount": item.amount, "type": item.type.value, "description": item.description, "created_at": item.created_at} for item in sorted(user.transactions, key=lambda item: item.created_at, reverse=True)]}
 
 
+def thread_json(user: User, request: ExchangeRequest, conversation: Conversation):
+    messages = [
+        {
+            "id": message.id,
+            "body": message.body,
+            "sender": message.sender.full_name,
+            "is_mine": message.sender_id == user.id,
+            "is_read": message.is_read,
+            "created_at": message.created_at,
+        }
+        for message in conversation.messages
+    ]
+    partner = request.receiver if request.sender_id == user.id else request.sender
+    return {
+        "request_id": request.id,
+        "partner": partner.full_name,
+        "teaching_skill": request.teaching_skill.name,
+        "learning_skill": request.learning_skill.name,
+        "unread": sum(1 for message in conversation.messages if message.receiver_id == user.id and not message.is_read),
+        "last_activity": messages[-1]["created_at"] if messages else request.created_at,
+        "messages": messages,
+    }
+
+
 @router.get("/messages")
 def messages(user: Annotated[User, Depends(get_current_user)]):
-    conversations = [conversation for conversation in user.sent_requests + user.received_requests if conversation.conversation]
-    result = []
-    for request in conversations:
-        for message in request.conversation.messages:
-            if message.sender_id == user.id or message.receiver_id == user.id:
-                result.append({"id": message.id, "request_id": request.id, "body": message.body, "sender": message.sender.full_name, "is_read": message.is_read, "created_at": message.created_at})
-    return {"messages": sorted(result, key=lambda item: item["created_at"], reverse=True)}
+    """Conversations the user takes part in, newest activity first."""
+    threads = [
+        thread_json(user, request, request.conversation)
+        for request in user.sent_requests + user.received_requests
+        if request.conversation
+    ]
+    return {"threads": sorted(threads, key=lambda thread: thread["last_activity"], reverse=True)}
+
+
+def get_participating_request(db: Session, request_id: int, user: User) -> ExchangeRequest:
+    request = db.get(ExchangeRequest, request_id)
+    if not request or user.id not in (request.sender_id, request.receiver_id):
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return request
 
 
 @router.post("/messages/{request_id}")
 def send_message(request_id: int, payload: MessageCreate, user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)]):
-    request = db.get(ExchangeRequest, request_id)
-    if not request or user.id not in (request.sender_id, request.receiver_id) or not request.conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found")
+    request = get_participating_request(db, request_id, user)
+    if request.status not in (RequestStatus.ACCEPTED, RequestStatus.COMPLETED):
+        raise HTTPException(status_code=409, detail="You can only message once the exchange request is accepted")
+
+    conversation = ensure_conversation(db, request)
     receiver_id = request.receiver_id if request.sender_id == user.id else request.sender_id
-    message = Message(conversation_id=request.conversation.id, sender_id=user.id, receiver_id=receiver_id, body=payload.body.strip())
+    message = Message(conversation_id=conversation.id, sender_id=user.id, receiver_id=receiver_id, body=payload.body.strip())
     db.add(message)
+    notify(
+        db,
+        receiver_id,
+        NotificationType.NEW_MESSAGE,
+        "New message",
+        f"{user.full_name} sent you a message.",
+        "exchange_request",
+        request.id,
+    )
     db.commit()
     return {"message": "Message sent", "id": message.id}
+
+
+@router.post("/messages/{request_id}/read")
+def mark_thread_read(request_id: int, user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)]):
+    request = get_participating_request(db, request_id, user)
+    unread = [
+        message
+        for message in (request.conversation.messages if request.conversation else [])
+        if message.receiver_id == user.id and not message.is_read
+    ]
+    for message in unread:
+        message.is_read = True
+    db.commit()
+    return {"message": "Thread marked as read", "marked_read": len(unread)}
+
+
+@router.get("/notifications")
+def notifications(user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)]):
+    items = (
+        db.query(Notification)
+        .filter(Notification.user_id == user.id)
+        .order_by(Notification.created_at.desc(), Notification.id.desc())
+        .limit(20)
+        .all()
+    )
+    return {
+        "unread": sum(1 for item in items if not item.is_read),
+        "notifications": [
+            {
+                "id": item.id,
+                "type": item.type.value,
+                "title": item.title,
+                "body": item.body,
+                "is_read": item.is_read,
+                "created_at": item.created_at,
+            }
+            for item in items
+        ],
+    }
+
+
+@router.post("/notifications/read")
+def mark_notifications_read(user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)]):
+    marked = (
+        db.query(Notification)
+        .filter(Notification.user_id == user.id, Notification.is_read.is_(False))
+        .update({Notification.is_read: True}, synchronize_session=False)
+    )
+    db.commit()
+    return {"message": "Notifications marked as read", "marked_read": marked}
