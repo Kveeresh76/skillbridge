@@ -7,7 +7,8 @@ from sqlalchemy.orm import Session
 from app.api.auth import get_current_user
 from app.database.database import get_db
 from app.models import ExchangeRequest, Skill, User, UserSkill
-from app.models.common import UserSkillType
+from app.models.common import NotificationType, RequestStatus, UserSkillType
+from app.services.exchange import notify
 
 router = APIRouter(prefix="/requests", tags=["requests"])
 
@@ -55,7 +56,7 @@ def create_exchange_request(
             ExchangeRequest.receiver_id == receiver.id,
             ExchangeRequest.teaching_skill_id == teaching_skill.id,
             ExchangeRequest.learning_skill_id == learning_skill.id,
-            ExchangeRequest.status == "PENDING",
+            ExchangeRequest.status == RequestStatus.PENDING,
         )
         .first()
     )
@@ -70,6 +71,16 @@ def create_exchange_request(
         message=payload.message.strip(),
     )
     db.add(exchange_request)
+    db.flush()
+    notify(
+        db,
+        receiver.id,
+        NotificationType.NEW_REQUEST,
+        "New exchange request",
+        f"{user.full_name} wants to trade {teaching_skill.name} for {learning_skill.name}.",
+        "exchange_request",
+        exchange_request.id,
+    )
     db.commit()
     db.refresh(exchange_request)
 

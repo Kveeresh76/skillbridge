@@ -7,22 +7,35 @@ Create Date: 2026-09-07
 """
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 revision = "0001"
 down_revision = None
 branch_labels = None
 depends_on = None
 
-skill_level = sa.Enum("BEGINNER", "INTERMEDIATE", "ADVANCED", "EXPERT", name="skilllevel")
-user_skill_type = sa.Enum("OFFERED", "WANTED", name="userskilltype")
-transaction_type = sa.Enum("EARNED", "SPENT", "BONUS", "REFUND", "ADJUSTMENT", name="transactiontype")
-request_status = sa.Enum("PENDING", "ACCEPTED", "REJECTED", "CANCELLED", "COMPLETED", name="requeststatus")
-session_status = sa.Enum("SCHEDULED", "IN_PROGRESS", "COMPLETED", "CANCELLED", name="sessionstatus")
-notification_type = sa.Enum(
+skill_level = postgresql.ENUM(
+    "BEGINNER", "INTERMEDIATE", "ADVANCED", "EXPERT",
+    name="skilllevel", create_type=False,
+)
+user_skill_type = postgresql.ENUM("OFFERED", "WANTED", name="userskilltype", create_type=False)
+transaction_type = postgresql.ENUM(
+    "EARNED", "SPENT", "BONUS", "REFUND", "ADJUSTMENT",
+    name="transactiontype", create_type=False,
+)
+request_status = postgresql.ENUM(
+    "PENDING", "ACCEPTED", "REJECTED", "CANCELLED", "COMPLETED",
+    name="requeststatus", create_type=False,
+)
+session_status = postgresql.ENUM(
+    "SCHEDULED", "IN_PROGRESS", "COMPLETED", "CANCELLED",
+    name="sessionstatus", create_type=False,
+)
+notification_type = postgresql.ENUM(
     "NEW_REQUEST", "REQUEST_ACCEPTED", "REQUEST_REJECTED", "NEW_MESSAGE",
     "SESSION_SCHEDULED", "SESSION_REMINDER", "SESSION_COMPLETED",
     "CREDITS_EARNED", "CREDITS_SPENT", "NEW_RATING",
-    name="notificationtype",
+    name="notificationtype", create_type=False,
 )
 
 
