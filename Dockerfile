@@ -1,7 +1,7 @@
 FROM node:20-slim AS frontend-build
 
 WORKDIR /frontend
-COPY frontend/package.json frontend/package-lock.json* ./
+COPY frontend/package.json ./
 RUN npm install
 COPY frontend/ ./
 ARG VITE_API_URL=/api

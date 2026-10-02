@@ -131,13 +131,21 @@ before upgrades.
 
 ### Render deployment
 
-Create a Render PostgreSQL service first, then add its **internal database URL**
-to the web service environment as `DATABASE_URL`. Do not use `localhost`,
-`127.0.0.1`, or the public browser URL for this value. Render services must
-also define `JWT_SECRET_KEY`, `CORS_ORIGINS`, `ENVIRONMENT=production`, and
-`DEBUG=false` before deploying. The container runs `alembic upgrade head` on
-startup and refuses to start if production is configured with a localhost
-database URL.
+Create a Render PostgreSQL service and a Docker web service for this repository
+(use the root `Dockerfile`). The web service serves the frontend and API together
+on port `10000`; set its health check path to `/api/health`.
+
+Set `DATABASE_URL` to the PostgreSQL service's **internal** connection URL and
+change its scheme to `postgresql+psycopg://` (keep the username, password, host,
+port, and database unchanged). The backend uses Psycopg 3, so a generic
+`postgresql://` URL may try to load the uninstalled Psycopg 2 driver. Do not use
+`localhost`, `127.0.0.1`, or the public database URL. Also set
+`JWT_SECRET_KEY` to a unique random value of at least 32 characters,
+`CORS_ORIGINS` to the web service's public HTTPS origin,
+`ENVIRONMENT=production`, and `DEBUG=false`. Set `CORS_ORIGINS` after Render
+assigns the service URL, then redeploy if needed. The container runs
+`alembic upgrade head` on startup and refuses to start if production is
+configured with a localhost database URL.
 
 ## Environment variables
 
